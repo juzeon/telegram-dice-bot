@@ -1,13 +1,9 @@
-mod ano;
+mod bot;
+mod types;
 
-use crate::ano::test;
-use teloxide::Bot;
-use teloxide::payloads::{EditMessageText, GetChat};
+use crate::bot::DiceBot;
 use teloxide::prelude::*;
-use teloxide::types::Me;
 use tracing::{debug, instrument};
-use tracing_core::{Level, LevelFilter};
-use tracing_subscriber::fmt::layer;
 use tracing_subscriber::{Layer, filter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
@@ -15,14 +11,10 @@ use tracing_subscriber::{Layer, filter, fmt, layer::SubscriberExt, util::Subscri
 async fn main() {
     tracing_subscriber::registry()
         .with(
-            fmt::layer()
-                .with_filter(LevelFilter::DEBUG)
-                .with_filter(filter::filter_fn(|x| {
-                    x.target().starts_with(env!("CARGO_PKG_NAME"))
-                })),
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| format!("{}=debug", env!("CARGO_CRATE_NAME")).into()),
         )
+        .with(tracing_subscriber::fmt::layer())
         .init();
-    let bot = Bot::new("token");
-    teloxide::repl(bot, |bot: Bot, msg: GetChat, me: Me| async move { Ok(()) }).await;
-    println!("Hello, world!");
+    DiceBot::new().await.launch().await;
 }
