@@ -11,3 +11,5 @@ teloxide = { version = "0.15.0", features = ["macros"] }
 tokio = { version = "1.44.2", features = ["full"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+regex = "1.11.1"
+rand = "0.9.1"
