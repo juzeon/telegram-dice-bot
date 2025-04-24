@@ -40,7 +40,7 @@ enum DiceCommand {
     #[command(description = "显示帮助")]
     Help,
     #[command(description = "选一个YesOrNo")]
-    YesOrNo,
+    YesOrNo(String),
 }
 #[derive(Clone, Debug)]
 pub struct DiceBot {
@@ -105,10 +105,18 @@ impl DiceBot {
                     .reply_to(msg.id)
                     .await?;
             }
-            DiceCommand::YesOrNo => {
-                bot.send_message(msg.chat.id, "yes or no")
-                    .reply_to(msg.id)
-                    .await?;
+            DiceCommand::YesOrNo(title) => {
+                let prefix = if title != "" {
+                    format!("<b>{title}：</b>\n\n")
+                } else {
+                    "".into()
+                };
+                let res = if Self::get_random(0..=1) == 0 {
+                    "Yes!"
+                } else {
+                    "No!"
+                };
+                Self::reply(bot, &msg, &format!("{prefix}{res}")).await?;
             }
         }
         Ok(())
