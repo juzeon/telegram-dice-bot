@@ -5,6 +5,7 @@ use tokio::fs::read_to_string;
 pub struct Config {
     pub token: String,
     pub prefix: String,
+    pub real_random: bool,
 }
 impl Config {
     pub async fn read_from_file() -> Config {

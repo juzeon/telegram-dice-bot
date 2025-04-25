@@ -1,11 +1,14 @@
 use crate::types::Config;
 use anyhow::{Context, bail};
-use rand::Rng;
+use rand::prelude::StdRng;
+use rand::{Rng, RngCore, SeedableRng};
 use regex::{Captures, Regex};
 use std::error::Error;
+use std::num::ParseIntError;
 use std::ops::{Deref, Range, RangeInclusive};
 use std::str::FromStr;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 use teloxide::Bot;
 use teloxide::dispatching::{HandlerExt, UpdateFilterExt};
 use teloxide::dptree::Handler;
@@ -16,7 +19,8 @@ use teloxide::requests::{Output, ResponseResult};
 use teloxide::sugar::request::RequestReplyExt;
 use teloxide::types::{ParseMode, ReplyParameters};
 use teloxide::utils::command::BotCommands;
-use tracing::{debug, info};
+use tokio::sync::Mutex;
+use tracing::{debug, info, warn};
 
 static DICE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(\d*)[dD](\d+)((?:[+-]\d+)*)(?: +(.*))?$").unwrap());
@@ -44,8 +48,9 @@ enum DiceCommand {
     #[command(description = "选一个YesOrNo")]
     YesOrNo(String),
 }
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct DiceBot {
+    rng: Arc<Mutex<StdRng>>,
     config: Config,
     bot: Bot,
 }
@@ -85,16 +90,43 @@ impl FromStr for Fix {
 impl DiceBot {
     pub async fn new() -> DiceBot {
         let config = Config::read_from_file().await;
+        let mut rng = StdRng::from_os_rng();
+        if config.real_random {
+            match Self::get_real_random_rng().await {
+                Ok(r) => {
+                    info!("Use real random rng");
+                    rng = r;
+                }
+                Err(err) => {
+                    warn!("Cannot get real random rng: {:#}", err);
+                }
+            }
+        }
         let dice_bot = DiceBot {
+            rng: Arc::new(Mutex::new(rng)),
             config: config.clone(),
             bot: Bot::new(config.token.clone()),
         };
+        info!("Created bot");
         dice_bot
     }
+    async fn get_real_random_rng() -> anyhow::Result<StdRng> {
+        let text = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10)).build().unwrap()
+            .get("https://www.random.org/integers/?num=1&min=1&max=1000000000&col=1&base=10&format=plain&rnd=new")
+            .send().await?.text().await?.trim().to_string();
+        debug!(text, "From random.org");
+        let u = text.parse::<u64>()?;
+        Ok(StdRng::seed_from_u64(u))
+    }
     pub async fn launch(&self) {
+        let self_clone = self.clone();
         let command_handler = Update::filter_message()
             .filter_command::<DiceCommand>()
-            .endpoint(Self::command_handler);
+            .endpoint(move |bot: Bot, msg: Message, cmd: DiceCommand| {
+                let self_clone = self_clone.clone();
+                async move { self_clone.command_handler(bot, msg, cmd).await }
+            });
         let self_clone = self.clone();
         let text_handler = Update::filter_message().endpoint(move |bot: Bot, msg: Message| {
             let self_clone = self_clone.clone();
@@ -109,7 +141,12 @@ impl DiceBot {
             .dispatch()
             .await;
     }
-    async fn command_handler(bot: Bot, msg: Message, cmd: DiceCommand) -> anyhow::Result<()> {
+    async fn command_handler(
+        &self,
+        bot: Bot,
+        msg: Message,
+        cmd: DiceCommand,
+    ) -> anyhow::Result<()> {
         match cmd {
             DiceCommand::Help | DiceCommand::Start => {
                 bot.send_message(msg.chat.id, DiceCommand::descriptions().to_string())
@@ -123,7 +160,7 @@ impl DiceBot {
                 } else {
                     "".into()
                 };
-                let res = if Self::get_random(0..=1) == 0 {
+                let res = if self.get_random(0..=1).await == 0 {
                     "Yes!"
                 } else {
                     "No!"
@@ -194,7 +231,7 @@ impl DiceBot {
         info!(?caps, count, dimension, fixes, comment, ?fix_caps, "Dice");
         let mut res_arr: Vec<String> = vec![];
         for i in 1..=count {
-            let roll = Self::get_random(1..=dimension);
+            let roll = self.get_random(1..=dimension).await;
             let prefix = if count != 1 {
                 &format!("第{}个骰子：", i)
             } else {
@@ -231,7 +268,7 @@ impl DiceBot {
         Self::reply(bot, &msg, &format!("{prefix}{}", res_arr.join("\n"))).await?;
         Ok(())
     }
-    fn get_random(range: RangeInclusive<usize>) -> usize {
-        rand::rng().random_range(range)
+    async fn get_random(&self, range: RangeInclusive<usize>) -> usize {
+        self.rng.lock().await.random_range(range)
     }
 }
