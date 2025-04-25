@@ -1,20 +1,22 @@
 use crate::types::Config;
 use anyhow::{Context, bail};
 use rand::Rng;
-use regex::Regex;
+use regex::{Captures, Regex};
 use std::error::Error;
-use std::ops::{Range, RangeInclusive};
+use std::ops::{Deref, Range, RangeInclusive};
 use std::str::FromStr;
 use std::sync::LazyLock;
 use teloxide::Bot;
 use teloxide::dispatching::{HandlerExt, UpdateFilterExt};
+use teloxide::dptree::Handler;
+use teloxide::dptree::di::Injectable;
 use teloxide::payloads::SendMessageSetters;
 use teloxide::prelude::{Dispatcher, Message, Requester, Update};
-use teloxide::requests::ResponseResult;
+use teloxide::requests::{Output, ResponseResult};
 use teloxide::sugar::request::RequestReplyExt;
 use teloxide::types::{ParseMode, ReplyParameters};
 use teloxide::utils::command::BotCommands;
-use tracing::info;
+use tracing::{debug, info};
 
 static DICE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(\d*)[dD](\d+)((?:[+-]\d+)*)(?: +(.*))?$").unwrap());
@@ -63,14 +65,20 @@ impl FromStr for Fix {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let sign = &s[0..1];
-        let num = s[1..].parse::<usize>()?;
+        let mut chars = s.chars();
+        let sign = chars.next().context("empty string")?;
+        let num_str = chars.as_str(); // Get remaining string after sign
+
+        if num_str.is_empty() {
+            bail!("missing number after sign");
+        }
+
+        let num = num_str.parse::<usize>()?;
+
         match sign {
-            "+" => Ok(Self::Add(num)),
-            "-" => Ok(Self::Sub(num)),
-            _ => {
-                bail!("not a sign")
-            }
+            '+' => Ok(Self::Add(num)),
+            '-' => Ok(Self::Sub(num)),
+            _ => bail!("invalid sign character '{}'", sign),
         }
     }
 }
@@ -84,14 +92,18 @@ impl DiceBot {
         dice_bot
     }
     pub async fn launch(&self) {
-        let self_clone = self.clone();
         let command_handler = Update::filter_message()
             .filter_command::<DiceCommand>()
             .endpoint(Self::command_handler);
-        let text_handler = Update::filter_message().endpoint(Self::text_handler);
+        let self_clone = self.clone();
+        let text_handler = Update::filter_message().endpoint(move |bot: Bot, msg: Message| {
+            let self_clone = self_clone.clone();
+            async move { self_clone.text_handler(bot, msg).await }
+        });
         let handler = teloxide::dptree::entry()
             .branch(command_handler)
             .branch(text_handler);
+        let self_clone = self.clone();
         Dispatcher::builder(self_clone.bot, handler)
             .build()
             .dispatch()
@@ -128,13 +140,34 @@ impl DiceBot {
             .await?;
         Ok(())
     }
-    async fn text_handler(bot: Bot, msg: Message) -> anyhow::Result<()> {
-        let caps = DICE_RE.captures(msg.text().context("message empty")?);
-        if caps.is_none() {
-            Self::reply(bot, &msg, "骰子语法不正确，请使用 /help 查看帮助").await?;
-            return Ok(());
+    async fn text_handler(&self, bot: Bot, msg: Message) -> anyhow::Result<()> {
+        debug!(?msg, "Message");
+        let mut text = match msg.text() {
+            None => return Ok(()),
+            Some(t) => t,
+        };
+        if self.config.prefix.as_str() != "" {
+            match text.strip_prefix(self.config.prefix.as_str()) {
+                None => {
+                    if msg.chat.is_private() {
+                        Self::reply(bot, &msg, "骰子语法不正确，请使用 /help 查看帮助").await?;
+                    }
+                    return Ok(());
+                }
+                Some(stripped) => {
+                    text = stripped;
+                }
+            }
         }
-        let caps = caps.unwrap();
+        let caps = match DICE_RE.captures(text) {
+            None => {
+                if msg.chat.is_private() || self.config.prefix.as_str() != "" {
+                    Self::reply(bot, &msg, "骰子语法不正确，请使用 /help 查看帮助").await?;
+                }
+                return Ok(());
+            }
+            Some(c) => c,
+        };
         let count = caps
             .get(1)
             .map(|x| x.as_str())

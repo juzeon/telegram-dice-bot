@@ -12,6 +12,7 @@ cargo build -r
 
 ```yaml
 token: xxxx:xxxxxx # Telegram Bot Token
+prefix: "" # 填入不为空的字符串则使用前缀，如前缀为"."，则语法类似 .d10
 ```
 
 ## 骰子语法
