@@ -1,6 +1,6 @@
 # Telegram Dice Bot
 
-Telegram骰子机器人，适用于安科/跑团等。
+Telegram骰子机器人，适用于安科/跑团等。Demo：<https://t.me/anko_dice_bot>。
 
 ## 编译
 
