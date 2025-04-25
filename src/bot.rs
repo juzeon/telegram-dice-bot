@@ -220,6 +220,10 @@ impl DiceBot {
         let fixes = caps.get(3).map(|x| x.as_str()).unwrap_or("");
         let comment = caps.get(4).map(|x| x.as_str()).unwrap_or("");
         let mut fix_caps = None;
+        if count > 100 {
+            Self::reply(bot, &msg, "骰子个数不能大于100").await?;
+            return Ok(());
+        }
         if fixes != "" {
             fix_caps = Some(DICE_FIXES_RE.captures_iter(fixes).collect::<Vec<_>>());
             let len = fix_caps.as_ref().unwrap().len();
