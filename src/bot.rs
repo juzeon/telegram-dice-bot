@@ -120,17 +120,31 @@ impl DiceBot {
         Ok(StdRng::seed_from_u64(u))
     }
     pub async fn launch(&self) {
+        let handle_handler_result =
+            async |bot: &Bot, msg: &Message, result: anyhow::Result<()>| match result {
+                Ok(_) => result,
+                Err(err) => {
+                    let _ = Self::reply(&bot, &msg, &format!("{:#}", err)).await;
+                    Err(err)
+                }
+            };
         let self_clone = self.clone();
         let command_handler = Update::filter_message()
             .filter_command::<DiceCommand>()
             .endpoint(move |bot: Bot, msg: Message, cmd: DiceCommand| {
-                let self_clone = self_clone.clone();
-                async move { self_clone.command_handler(bot, msg, cmd).await }
+                let inner_self_clone = self_clone.clone();
+                async move {
+                    let result = inner_self_clone.command_handler(&bot, &msg, cmd).await;
+                    handle_handler_result(&bot, &msg, result).await
+                }
             });
         let self_clone = self.clone();
         let text_handler = Update::filter_message().endpoint(move |bot: Bot, msg: Message| {
-            let self_clone = self_clone.clone();
-            async move { self_clone.text_handler(bot, msg).await }
+            let inner_self_clone = self_clone.clone();
+            async move {
+                let result = inner_self_clone.text_handler(&bot, &msg).await;
+                handle_handler_result(&bot, &msg, result).await
+            }
         });
         let handler = teloxide::dptree::entry()
             .branch(command_handler)
@@ -143,8 +157,8 @@ impl DiceBot {
     }
     async fn command_handler(
         &self,
-        bot: Bot,
-        msg: Message,
+        bot: &Bot,
+        msg: &Message,
         cmd: DiceCommand,
     ) -> anyhow::Result<()> {
         match cmd {
@@ -170,14 +184,14 @@ impl DiceBot {
         }
         Ok(())
     }
-    async fn reply(bot: Bot, msg: &Message, text: &str) -> anyhow::Result<()> {
+    async fn reply(bot: &Bot, msg: &Message, text: &str) -> anyhow::Result<()> {
         bot.send_message(msg.chat.id, text)
             .parse_mode(ParseMode::Html)
             .reply_to(msg.id)
             .await?;
         Ok(())
     }
-    async fn text_handler(&self, bot: Bot, msg: Message) -> anyhow::Result<()> {
+    async fn text_handler(&self, bot: &Bot, msg: &Message) -> anyhow::Result<()> {
         debug!(?msg, "Message");
         let mut text = match msg.text() {
             None => return Ok(()),
@@ -221,15 +235,13 @@ impl DiceBot {
         let comment = caps.get(4).map(|x| x.as_str()).unwrap_or("");
         let mut fix_caps = None;
         if count > 100 {
-            Self::reply(bot, &msg, "骰子个数不能大于100").await?;
-            return Ok(());
+            bail!("骰子个数不能大于100");
         }
         if fixes != "" {
             fix_caps = Some(DICE_FIXES_RE.captures_iter(fixes).collect::<Vec<_>>());
             let len = fix_caps.as_ref().unwrap().len();
             if len != count && len != 1 {
-                Self::reply(bot, &msg, "修正值和骰子面数不匹配").await?;
-                return Ok(());
+                bail!("修正值和骰子面数不匹配");
             }
         }
         info!(?caps, count, dimension, fixes, comment, ?fix_caps, "Dice");
