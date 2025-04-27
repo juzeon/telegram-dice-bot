@@ -11,8 +11,6 @@ use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use teloxide::Bot;
 use teloxide::dispatching::{HandlerExt, UpdateFilterExt};
-use teloxide::dptree::Handler;
-use teloxide::dptree::di::Injectable;
 use teloxide::payloads::SendMessageSetters;
 use teloxide::prelude::{Dispatcher, Message, Requester, Update};
 use teloxide::requests::{Output, ResponseResult};
@@ -124,7 +122,7 @@ impl DiceBot {
             async |bot: &Bot, msg: &Message, result: anyhow::Result<()>| match result {
                 Ok(_) => result,
                 Err(err) => {
-                    let _ = Self::reply(&bot, &msg, &format!("{:#}", err)).await;
+                    let _ = Self::reply(bot, msg, &format!("{:#}", err)).await;
                     Err(err)
                 }
             };
@@ -169,7 +167,7 @@ impl DiceBot {
                     .await?;
             }
             DiceCommand::YesOrNo(title) => {
-                let prefix = if title != "" {
+                let prefix = if !title.is_empty() {
                     format!("<b>{title}：</b>\n\n")
                 } else {
                     "".into()
@@ -179,7 +177,7 @@ impl DiceBot {
                 } else {
                     "No!"
                 };
-                Self::reply(bot, &msg, &format!("{prefix}{res}")).await?;
+                Self::reply(bot, msg, &format!("{prefix}{res}")).await?;
             }
         }
         Ok(())
@@ -201,7 +199,7 @@ impl DiceBot {
             match text.strip_prefix(self.config.prefix.as_str()) {
                 None => {
                     if msg.chat.is_private() {
-                        Self::reply(bot, &msg, "骰子语法不正确，请使用 /help 查看帮助").await?;
+                        Self::reply(bot, msg, "骰子语法不正确，请使用 /help 查看帮助").await?;
                     }
                     return Ok(());
                 }
@@ -213,7 +211,7 @@ impl DiceBot {
         let caps = match DICE_RE.captures(text) {
             None => {
                 if msg.chat.is_private() || self.config.prefix.as_str() != "" {
-                    Self::reply(bot, &msg, "骰子语法不正确，请使用 /help 查看帮助").await?;
+                    Self::reply(bot, msg, "骰子语法不正确，请使用 /help 查看帮助").await?;
                 }
                 return Ok(());
             }
@@ -237,7 +235,7 @@ impl DiceBot {
         if count > 100 {
             bail!("骰子个数不能大于100");
         }
-        if fixes != "" {
+        if !fixes.is_empty() {
             fix_caps = Some(DICE_FIXES_RE.captures_iter(fixes).collect::<Vec<_>>());
             let len = fix_caps.as_ref().unwrap().len();
             if len != count && len != 1 {
@@ -276,12 +274,12 @@ impl DiceBot {
                 res_arr.push(format!("{}{}", prefix, roll))
             }
         }
-        let prefix = if comment == "" {
+        let prefix = if comment.is_empty() {
             ""
         } else {
             &format!("<b>{comment}：</b>\n\n")
         };
-        Self::reply(bot, &msg, &format!("{prefix}{}", res_arr.join("\n"))).await?;
+        Self::reply(bot, msg, &format!("{prefix}{}", res_arr.join("\n"))).await?;
         Ok(())
     }
     async fn get_random(&self, range: RangeInclusive<usize>) -> usize {
