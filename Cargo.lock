@@ -1543,11 +1543,13 @@ version = "0.1.0"
 dependencies = [
  "ahash",
  "anyhow",
+ "base64",
  "getrandom 0.3.3",
  "rand",
  "regex",
  "reqwest",
  "serde",
+ "serde_json",
  "serde_yaml",
  "teloxide",
  "tokio",

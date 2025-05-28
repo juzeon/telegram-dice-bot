@@ -13,6 +13,8 @@ tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 regex = "1.11.1"
 rand = "0.9.1"
-reqwest = { version = "0.12.15", default-features = false, features = ["rustls-tls"] }
+reqwest = { version = "0.12.15", default-features = false, features = ["rustls-tls", "json"] }
 ahash = "0.8.12"
 getrandom = "0.3.3"
+serde_json = "1.0.140"
+base64 = "0.22.1"

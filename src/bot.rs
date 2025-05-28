@@ -1,6 +1,8 @@
 use crate::types::Config;
 use ahash::AHasher;
 use anyhow::{Context, bail};
+use base64::Engine;
+use base64::prelude::BASE64_STANDARD;
 use rand::prelude::StdRng;
 use rand::{Rng, RngCore, SeedableRng};
 use regex::{Captures, Regex};
@@ -97,14 +99,19 @@ impl DiceBot {
         dice_bot
     }
     async fn get_real_random_rng(addition: Option<&[u8]>) -> anyhow::Result<StdRng> {
-        let text = reqwest::Client::builder()
-            .timeout(Duration::from_secs(10)).build().unwrap()
-            .get("https://www.random.org/integers/?num=1&min=1&max=1000000000&col=1&base=10&format=plain&rnd=new")
-            .send().await?.text().await?.trim().to_string();
-        debug!(text, "From random.org");
-        let u = text.parse::<u64>()?;
+        let resp: serde_json::Value = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .unwrap()
+            .get("https://csprng.xyz/v1/api")
+            .send()
+            .await?
+            .json()
+            .await?;
+        debug!(?resp, "From csprng.xyz");
+        let u = BASE64_STANDARD.decode(resp["Data"].as_str().context("cannot get Data")?)?;
         let mut hasher = AHasher::default();
-        hasher.write_u64(u);
+        hasher.write(u.as_slice());
         if let Some(v) = addition {
             hasher.write(v);
         }
