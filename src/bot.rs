@@ -1,9 +1,11 @@
 use crate::types::Config;
+use ahash::AHasher;
 use anyhow::{Context, bail};
 use rand::prelude::StdRng;
 use rand::{Rng, RngCore, SeedableRng};
 use regex::{Captures, Regex};
 use std::error::Error;
+use std::hash::Hasher;
 use std::num::ParseIntError;
 use std::ops::{Deref, Range, RangeInclusive};
 use std::str::FromStr;
@@ -48,7 +50,6 @@ enum DiceCommand {
 }
 #[derive(Clone)]
 pub struct DiceBot {
-    rng: Arc<Mutex<StdRng>>,
     config: Config,
     bot: Bot,
 }
@@ -88,34 +89,26 @@ impl FromStr for Fix {
 impl DiceBot {
     pub async fn new() -> DiceBot {
         let config = Config::read_from_file().await;
-        let mut rng = StdRng::from_os_rng();
-        if config.real_random {
-            match Self::get_real_random_rng().await {
-                Ok(r) => {
-                    info!("Use real random rng");
-                    rng = r;
-                }
-                Err(err) => {
-                    warn!("Cannot get real random rng: {:#}", err);
-                }
-            }
-        }
         let dice_bot = DiceBot {
-            rng: Arc::new(Mutex::new(rng)),
             config: config.clone(),
             bot: Bot::new(config.token.clone()),
         };
         info!("Created bot");
         dice_bot
     }
-    async fn get_real_random_rng() -> anyhow::Result<StdRng> {
+    async fn get_real_random_rng(addition: Option<&[u8]>) -> anyhow::Result<StdRng> {
         let text = reqwest::Client::builder()
             .timeout(Duration::from_secs(10)).build().unwrap()
             .get("https://www.random.org/integers/?num=1&min=1&max=1000000000&col=1&base=10&format=plain&rnd=new")
             .send().await?.text().await?.trim().to_string();
         debug!(text, "From random.org");
         let u = text.parse::<u64>()?;
-        Ok(StdRng::seed_from_u64(u))
+        let mut hasher = AHasher::default();
+        hasher.write_u64(u);
+        if let Some(v) = addition {
+            hasher.write(v);
+        }
+        Ok(StdRng::seed_from_u64(hasher.finish()))
     }
     pub async fn launch(&self) {
         let handle_handler_result =
@@ -172,7 +165,18 @@ impl DiceBot {
                 } else {
                     "".into()
                 };
-                let res = if self.get_random(0..=1).await == 0 {
+                let res = if self
+                    .get_random(
+                        0..=1,
+                        if title.is_empty() {
+                            None
+                        } else {
+                            Some(title.as_bytes())
+                        },
+                    )
+                    .await
+                    == 0
+                {
                     "Yes!"
                 } else {
                     "No!"
@@ -245,7 +249,16 @@ impl DiceBot {
         info!(?caps, count, dimension, fixes, comment, ?fix_caps, "Dice");
         let mut res_arr: Vec<String> = vec![];
         for i in 1..=count {
-            let roll = self.get_random(1..=dimension).await;
+            let roll = self
+                .get_random(
+                    1..=dimension,
+                    if comment.is_empty() {
+                        None
+                    } else {
+                        Some(comment.as_bytes())
+                    },
+                )
+                .await;
             let prefix = if count != 1 {
                 &format!("第{}个骰子：", i)
             } else {
@@ -282,7 +295,27 @@ impl DiceBot {
         Self::reply(bot, msg, &format!("{prefix}{}", res_arr.join("\n"))).await?;
         Ok(())
     }
-    async fn get_random(&self, range: RangeInclusive<usize>) -> usize {
-        self.rng.lock().await.random_range(range)
+    async fn get_random(&self, range: RangeInclusive<usize>, b: Option<&[u8]>) -> usize {
+        let mut rng = match b {
+            None => StdRng::from_os_rng(),
+            Some(v) => {
+                let mut hasher = AHasher::default();
+                hasher.write(v);
+                hasher.write_u64(getrandom::u64().unwrap());
+                StdRng::seed_from_u64(hasher.finish())
+            }
+        };
+        if self.config.real_random {
+            match Self::get_real_random_rng(b).await {
+                Ok(r) => {
+                    info!("Use real random rng");
+                    rng = r;
+                }
+                Err(err) => {
+                    warn!("Cannot get real random rng: {:#}", err);
+                }
+            }
+        }
+        rng.random_range(range)
     }
 }
